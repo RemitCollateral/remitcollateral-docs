@@ -1,211 +1,364 @@
-# Contributing to StellarHomes
+# Contributing to RemitCollateral
 
-Thank you for your interest in contributing to **StellarHomes**! We welcome contributions of all kinds, including bug reports, feature requests, documentation improvements, frontend enhancements, and smart contract optimizations.
+Thank you for your interest in contributing. Bug reports, feature work,
+documentation, and protocol review are all welcome.
 
-This guide outlines our development workflow, coding standards, and step-by-step instructions to ensure a smooth contribution process.
----
-
-## 🗺️ Table of Contents
-
-- [Code of Conduct](#-code-of-conduct)
-- [Getting Started](#-getting-started)
-- [Development Workflows](#-development-workflows)
-  - [Smart Contract Development (Rust/Soroban)](#smart-contract-development-rustsoroban)
-  - [Frontend Web Application (Next.js/React/TypeScript)](#frontend-web-application-nextjsreacttypescript)
-- [Coding Standards & Best Practices](#-coding-standards--best-practices)
-  - [Soroban Smart Contracts](#soroban-smart-contracts)
-  - [Frontend client (React & TypeScript)](#frontend-client-react--typescript)
-- [Git Branching & Commit Guidelines](#-git-branching--commit-guidelines)
-  - [Branch Naming Convention](#branch-naming-convention)
-  - [Commit Message Format](#commit-message-format)
-- [Submitting a Pull Request](#-submitting-a-pull-request)
+RemitCollateral spans four repositories. This guide covers the workflow common to
+all of them, then the standards specific to each stack.
 
 ---
 
-## 🤝 Code of Conduct
+## Contents
 
-We are committed to fostering a welcoming, collaborative, and inclusive environment. By participating in this project, you agree to:
-- Be respectful, constructive, and empathetic to other contributors.
-- Focus on what is best for the community and the project.
-- Accept constructive criticism gracefully.
+- [Where does my change go?](#where-does-my-change-go)
+- [Getting started](#getting-started)
+- [Development workflows](#development-workflows)
+  - [Smart contracts (Rust / Soroban)](#smart-contracts-rust--soroban)
+  - [Backend (TypeScript / Express)](#backend-typescript--express)
+  - [Frontend (Next.js / React)](#frontend-nextjs--react)
+- [Coding standards](#coding-standards)
+- [Protocol invariants](#protocol-invariants)
+- [Branching and commits](#branching-and-commits)
+- [Submitting a pull request](#submitting-a-pull-request)
+- [Cross-repository changes](#cross-repository-changes)
+- [Code of conduct](#code-of-conduct)
 
 ---
 
-## 🚀 Getting Started
+## Where does my change go?
 
-To get started, follow these steps:
+| If your change is about… | Repository |
+|--------------------------|------------|
+| Collateral custody, loan state, liquidation, on-chain authorization | `remitcollateral-contract` |
+| API endpoints, reputation scoring, off-ramp partners, the lifecycle sweep | `remitcollateral-backend` |
+| Guarantor screens, wallet connection, the mock backend | `remitcollateral-frontend` |
+| Protocol design, integration guides, this document | `remitcollateral-docs` |
 
-1. **Fork the Repository**: Create a personal copy of the repository on GitHub.
-2. **Clone the Fork**: Clone your fork to your local machine:
+If a change touches more than one, read
+[Cross-repository changes](#cross-repository-changes) before you start.
+
+## Getting started
+
+1. **Fork** the repository you are changing.
+2. **Clone** your fork:
    ```bash
-   git clone https://github.com/<your-username>/StellarHomes.git
-   cd StellarHomes
+   git clone https://github.com/<your-username>/<repository>.git
+   cd <repository>
    ```
-3. **Set Up Upstream Remote**: Track the original repository to fetch the latest updates:
+3. **Track upstream** so you can pull in changes:
    ```bash
-   git remote add upstream https://github.com/NeonsLabs/Stellar-Homes.git
+   git remote add upstream https://github.com/RemitCollateral/<repository>.git
    ```
-4. **Create a Feature Branch**: Never work directly on `main`. Create a descriptive branch (see [Git Branching Guidelines](#-git-branching--commit-guidelines)):
+4. **Branch.** Never work on `main`:
    ```bash
    git checkout -b feature/your-feature-name
    ```
 
 ---
 
-## 🛠️ Development Workflows
+## Development workflows
 
-StellarHomes is split into two primary environments: the **Soroban smart contracts** and the **Next.js web application**.
+### Smart contracts (Rust / Soroban)
 
-### Smart Contract Development (Rust/Soroban)
+Source lives in `contracts/`, a Cargo workspace of three crates:
+`guarantor_vault`, `loan_ledger`, `liquidation_engine`.
 
-All smart contract source code is located in the `contracts/` directory.
+**Prerequisites:** Rust (latest stable), the `wasm32-unknown-unknown` target, and
+the Stellar CLI.
 
-> [!IMPORTANT]
-> To compile and test the contracts, you must have Rust and the Soroban CLI installed on your machine. See the [Stellar Developer Docs](https://developers.stellar.org) for installation guides.
-
-#### 1. Compile Contracts
-To build the contracts into WASM bytecode, run the following command from the root directory:
 ```bash
-cargo build --manifest-path contracts/Cargo.toml --target wasm32-unknown-unknown --release
+rustup target add wasm32-unknown-unknown
+cargo install --locked stellar-cli
 ```
-Alternatively, you can navigate into the `contracts` directory and run:
+
+**Build:**
+
 ```bash
 cd contracts
 cargo build --target wasm32-unknown-unknown --release
 ```
 
-#### 2. Run Tests
-StellarHomes uses Rust's built-in testing framework for unit and integration testing. Run tests with:
-```bash
-# From the root directory:
-cargo test --manifest-path contracts/Cargo.toml
+**Test:**
 
-# Or from the contracts directory:
+```bash
 cd contracts
-cargo test
+cargo test                          # all suites
+cargo test -p rc-loan-ledger        # a single crate
 ```
 
-#### 3. Linting and Formatting
-Before committing, ensure your code complies with formatting rules and passes the linter:
-```bash
-# Format code
-cargo fmt --manifest-path contracts/Cargo.toml
+The workspace records test snapshots under each crate's `test_snapshots/`. A diff
+there means ledger behaviour changed — review it deliberately and include the
+reasoning in your PR rather than regenerating it silently.
 
-# Run Clippy (linter)
-cargo clippy --manifest-path contracts/Cargo.toml -- -D warnings
+**Format and lint** before every commit:
+
+```bash
+cd contracts
+cargo fmt --all
+cargo clippy --all-targets --all-features -- -D warnings
 ```
 
----
+Clippy warnings are errors in CI. Do not silence one with `#[allow]` without a
+comment explaining why the lint does not apply.
 
-### Frontend Web Application (Next.js/React/TypeScript)
+### Backend (TypeScript / Express)
 
-The frontend is located in the `frontend/` directory and is built using Next.js (Pages Router), React, TypeScript, and Tailwind CSS.
-
-#### 1. Install Dependencies
-Navigate to the `frontend/` directory and install the required packages:
 ```bash
-cd frontend
 npm install
+cp .env.example .env
+npm run dev        # ts-node-dev, hot reload, http://localhost:4000
 ```
 
-#### 2. Run Development Server
-Run the local development server at `http://localhost:3000`:
+An empty `.env` boots a fully working API: every protocol parameter falls back to
+its documented default, and the off-ramp adapter and contract gateway are mocks.
+
 ```bash
-npm run dev
+npm run build      # tsc
+npm start          # node dist/index.js
 ```
 
-#### 3. Production Build
-Verify that the Next.js production build succeeds without errors:
+Verify `npm run build` passes before opening a PR — the dev server transpiles
+without type-checking, so a type error can hide until the build runs.
+
+### Frontend (Next.js / React)
+
+The frontend uses **pnpm**. Do not commit an `npm` or `yarn` lockfile.
+
 ```bash
-npm run build
+pnpm install
+cp .env.example .env.local
+pnpm dev           # http://localhost:3000
 ```
 
-#### 4. Linting
-Verify TypeScript types and run ESLint:
-```bash
-# Run ESLint check
-npm run lint
+| Command | Purpose |
+|---------|---------|
+| `pnpm dev` | Development server |
+| `pnpm build` | Production build |
+| `pnpm start` | Serve the production build |
+| `pnpm lint` | ESLint via `next lint` |
+| `pnpm typecheck` | `tsc --noEmit` |
 
-# Run type check
-npx tsc --noEmit
+Both `pnpm lint` and `pnpm typecheck` must pass.
+
+Default mode is `mock`, so the app runs with no backend. To work against a local
+backend:
+
+```env
+NEXT_PUBLIC_API_MODE=live
+NEXT_PUBLIC_API_URL=http://localhost:4000/api/v1
 ```
 
 ---
 
-## 📐 Coding Standards & Best Practices
+## Coding standards
 
-### Soroban Smart Contracts
+### Soroban contracts
 
-To maintain the security, upgradability, and readability of the smart contracts:
-- **Authorization Checks**: Always verify that the caller is authorized. Use `require_auth()` for functions changing status or balances.
-- **Reentrancy Mitigation**: Modify all internal state (e.g. user balances, transaction status) *before* invoking external contract calls or token transfers.
-- **Event Logging**: Emit a descriptive event for every state-changing action. Events must follow the patterns laid out in [ARCHITECTURE.md](ARCHITECTURE.md) (e.g., `ProposalCreated`, `ConfirmationRecorded`, `TokenDeposited`).
-- **Defensive Quorums**: Ensure that administrative changes to quorum satisfy `0 < quorum <= total_signers`.
-- **Bounded execution delays**: Limit execution delays to sensible defaults and respect the maximum `MAX_DELAY` constraint of 30 days.
+- **Authorize explicitly.** Every state-changing function calls `require_auth()`
+  on the acting address, and then checks that address against the stored role.
+  Authentication and authorization are two separate steps; do not conflate them.
+- **Respect the caller matrix.** Only the LoanLedger locks collateral; only the
+  LiquidationEngine forfeits it. If a new function needs vault access, extend the
+  matrix in [ARCHITECTURE.md](ARCHITECTURE.md#guarantorvault) deliberately rather
+  than widening an existing guard.
+- **State before transfer.** Update internal balances before invoking token
+  transfers or external contracts.
+- **Typed errors.** Add a variant to the crate's `Error` enum and use
+  `panic_with_error!`. Never panic with a bare message, and never reuse an
+  existing variant for a new failure mode — error codes are part of the contract's
+  public surface, so append rather than renumber.
+- **Basis points, not floats.** There is no floating point in `no_std`. Ratios are
+  `u32` basis points against the `BPS` constant.
+- **Watch integer division.** `principal_usd / installment_count` truncates. When
+  you introduce a new division, state where the remainder goes.
+- **Test the negative case.** A test that proves an unauthorized caller is
+  rejected is worth more than one that proves the happy path works.
 
-### Frontend Client (React & TypeScript)
+### Backend
 
-To keep the interface premium, bug-free, and high-performance:
-- **Strict Typing**: Avoid using `any`. Define clear TypeScript interfaces and types for props, states, and contract payloads.
-- **Consistent File Layout**:
-  - Components belong in `frontend/src/components/`.
-  - Pages belong in `frontend/src/pages/`.
-  - Global styles belong in `frontend/src/styles/`.
-- **Aesthetics & UI**:
-  - Keep styling consistent with Tailwind CSS. Maintain responsiveness across mobile, tablet, and desktop breakpoints.
-  - Follow the established dark mode design system. Avoid hardcoded raw colors and prefer Tailwind theme utility classes and CSS variables.
-  - Use subtle hover states and micro-animations to enhance interactive components (e.g. buttons, proposals, form inputs).
-- **SEO & Accessibility**:
-  - Every page should include proper meta titles and descriptions.
-  - Use semantic HTML tags (`<header>`, `<main>`, `<section>`, `<footer>`, etc.) instead of nesting generic `<div>` tags exclusively.
-  - All form controls and interactive buttons must have unique, descriptive `id` attributes.
+- **Strict typing.** No `any` in new code. Domain entities and DTOs belong in
+  `src/types`.
+- **Services hold logic; routes hold plumbing.** A route validates input, calls a
+  service, and shapes the response. Business rules do not live in `src/routes`.
+- **Go through the interfaces.** All chain access goes through `ContractGateway`
+  and all partner access through `OffRampAdapter`. Never import the Stellar SDK or
+  call a partner API directly from a service — that is what keeps the mock and
+  live implementations interchangeable.
+- **Parameters are configurable.** Protocol constants are read from `config`, with
+  a documented default. Do not inline a magic number that the architecture
+  describes as tunable.
+- **Audit the state changes.** Every meaningful transition calls `logAuditEvent`
+  with an `eventType`, an `action`, and enough detail to reconstruct what
+  happened.
+- **Unwind on failure.** If an operation touches the chain, local state, and a
+  partner, the failure path must unwind every step that already succeeded. See
+  the origination rollback in `loan.service.ts` for the shape of this.
+- **Round money at the boundary.** Monetary values are rounded to 2 decimal places
+  where they are stored, not opportunistically mid-calculation.
+
+### Frontend
+
+- **Strict TypeScript.** No `any`. Domain types in `lib/types.ts` mirror the
+  backend's data model.
+- **One API surface.** Screens import the single `api` object. If you add an
+  endpoint, add it to the `RemitCollateralApi` interface and implement it in
+  **both** `lib/api/http.ts` and `lib/api/mock/` — an unimplemented mock breaks
+  the no-backend workflow for everyone.
+- **Keep the mock honest.** The mock implements real protocol maths, not
+  hardcoded responses. If you change a formula, change it in
+  `lib/api/mock/protocol.ts` too, and make sure it still agrees with the backend.
+- **Tailwind, no raw colors.** Use theme utilities and CSS variables. Maintain
+  responsiveness across mobile, tablet, and desktop.
+- **Semantic and accessible markup.** Real landmark elements over nested `<div>`s;
+  labelled form controls; keyboard-reachable interactive elements.
+- **Never hide the risk.** Screens that commit a guarantor's collateral state the
+  amount at stake before the action, not after.
 
 ---
 
-## 🔀 Git Branching & Commit Guidelines
+## Protocol invariants
 
-We use structured branching and descriptive commits to maintain a clean project history.
+Some rules are load-bearing across all three implementations. A change that
+breaks one is a protocol change, not a bug fix — raise it as an issue in
+`remitcollateral-docs` first.
 
-### Branch Naming Convention
+1. **Collateral is never pooled.** One vault per guarantor, always.
+2. **The beneficiary never appears on-chain as an address.** They are a
+   `BytesN<32>` handle. No phone number, name, or KYC reference reaches the
+   ledger.
+3. **Only a registered partner can attest a repayment.** Never the beneficiary,
+   never the guarantor.
+4. **Partner identity comes from the authenticated credential**, never from a
+   request body.
+5. **Self-declared remittances carry zero scoring weight.** Only
+   `partner_reported` records influence the score, and therefore the LTV.
+6. **Loan closure is decided by principal repaid**, never by the number of
+   attestations received.
+7. **Liquidation forfeits the outstanding balance only.** The excess collateral
+   returns to the guarantor.
+8. **The liquidation cranks stay permissionless.** Their behaviour is a function
+   of loan state and the ledger clock alone.
+9. **Reputation is recomputed from records**, not stored as a running penalty, so
+   any score can be re-derived from the underlying history.
 
-Name your branches based on the nature of your changes:
-- `feature/` - New features or capabilities (e.g., `feature/dynamic-quorum`)
-- `fix/` - Bug fixes (e.g., `fix/proposal-fee-refund`)
-- `docs/` - Documentation updates (e.g., `docs/contributing-guidelines`)
-- `refactor/` - Code restructuring without behavioral changes (e.g., `refactor/roles-validation`)
-
-### Commit Message Format
-
-Commits should have a clear category and description. Use the following prefix convention:
-- `feat(<scope>):` for new features
-- `fix(<scope>):` for bug fixes
-- `docs:` for documentation modifications
-- `style:` for formatting, white-space adjustments, or visual styling changes
-- `refactor(<scope>):` for code refactoring
-
-*Examples:*
-- `feat(contracts): add dynamic quorum thresholds`
-- `fix(frontend): resolve double submission on proposal creation`
-- `docs: update deployment guidelines in readme`
+If a change requires the backend's maths and the contracts' maths to agree —
+LTV, collateral release, grace period — update both, and say so in the PR.
 
 ---
 
-## 📤 Submitting a Pull Request
+## Branching and commits
 
-Ready to submit your changes? Follow this checklist to ensure a quick merge:
+### Branch names
 
-1. **Keep Branch Synchronized**: Rebase or merge the latest `main` into your feature branch before submitting:
+- `feature/` — new capability (`feature/multi-partner-attestation`)
+- `fix/` — bug fix (`fix/collateral-release-rounding`)
+- `docs/` — documentation (`docs/deployment-wiring-order`)
+- `refactor/` — restructuring with no behaviour change (`refactor/extract-gateway`)
+- `chore/` — tooling, dependencies, CI
+
+### Commit messages
+
+```
+<type>(<scope>): <imperative summary>
+```
+
+Types: `feat`, `fix`, `docs`, `style`, `refactor`, `test`, `chore`.
+Scopes: `contracts`, `vault`, `ledger`, `engine`, `backend`, `frontend`, `api`,
+`docs`.
+
+Examples:
+
+```
+feat(ledger): reject attestations that would overpay the principal
+fix(backend): unwind the on-chain lock when disbursement fails
+docs: record the grace period mismatch between chain and sweep
+refactor(frontend): move quote derivation out of the loan form
+```
+
+Explain **why** in the body when the reason is not obvious from the diff.
+Security-relevant changes should always carry a body.
+
+---
+
+## Submitting a pull request
+
+1. **Sync with upstream:**
    ```bash
    git fetch upstream
-   git merge upstream/main
+   git rebase upstream/main
    ```
-2. **Verify All Checks Pass**:
-   - Ensure `cargo test` passes successfully.
-   - Run `cargo fmt` and `cargo clippy`.
-   - Run `npm run build` and `npm run lint` in the `frontend` folder.
-3. **Submit the PR**: Go to the GitHub repository and click "Compare & pull request".
-4. **Fill Out the PR Template**:
-   - **Summary**: Describe the changes, the rationale behind them, and what problem they solve.
-   - **Testing**: Explain how you verified your changes (e.g. unit tests, browser manual testing, contract deployment).
-   - **Related Issues**: Reference any open issues resolved by the PR (e.g., `Closes #12`).
-5. **Address Feedback**: Be prepared to make modifications based on reviewer suggestions. Once approved, your PR will be merged into `main`.
+
+2. **Run the checks for the repository you touched:**
+
+   | Repository | Checks |
+   |------------|--------|
+   | Contracts | `cargo fmt --all`, `cargo clippy --all-targets --all-features -- -D warnings`, `cargo test` |
+   | Backend | `npm run build` |
+   | Frontend | `pnpm lint`, `pnpm typecheck`, `pnpm build` |
+
+3. **Open the PR** and fill in:
+   - **Summary** — what changed and why. If it alters protocol behaviour, say so
+     in the first line.
+   - **Testing** — how you verified it. "Ran the tests" is not testing; name the
+     cases and the scenarios you exercised manually.
+   - **Protocol impact** — does this change a formula, a parameter default, an
+     authorization rule, or an API shape? Does another repository need a matching
+     change?
+   - **Related issues** — `Closes #12`.
+
+4. **Address review feedback.** Push follow-up commits rather than force-pushing
+   mid-review, so reviewers can see what changed.
+
+### What reviewers look for
+
+- Authorization checks on every new state-changing contract function.
+- Failure paths that unwind cleanly, especially where chain, local state, and a
+  partner are all involved.
+- Mock and live implementations kept in step.
+- No new magic number that the architecture describes as configurable.
+- Documentation updated when behaviour changed — including
+  [ARCHITECTURE.md](ARCHITECTURE.md) when an invariant or an integration gap
+  moves.
+
+---
+
+## Cross-repository changes
+
+Some work spans repositories — adding an endpoint, changing a shared formula,
+altering the wire format. Sequence it so `main` is never broken in either place:
+
+1. **Open an issue in `remitcollateral-docs` first** describing the change across
+   all affected layers, and get agreement on the shape before writing code.
+2. **Contracts first**, if involved. They are the slowest to change and the
+   hardest to reverse once deployed.
+3. **Backend second**, additively — add the new field or endpoint alongside the
+   old one rather than replacing it.
+4. **Frontend third**, consuming the new shape. Update the mock in the same PR.
+5. **Remove the old path last**, once nothing consumes it.
+6. **Update the docs** — particularly the
+   [integration status](ARCHITECTURE.md#integration-status) section, which is
+   meant to be an accurate account of what is wired and what is mocked. If you
+   close one of the listed gaps, delete that row.
+
+Link the PRs to one another so they can be reviewed together.
+
+---
+
+## Code of conduct
+
+We are committed to a welcoming, collaborative, and inclusive environment. By
+participating you agree to:
+
+- Be respectful, constructive, and empathetic toward other contributors.
+- Focus on what is best for the community and the project.
+- Accept constructive criticism gracefully, and offer it kindly.
+
+Report unacceptable behaviour to the maintainers through a private channel.
+
+---
+
+## Security
+
+Do not open a public issue for a vulnerability, especially one affecting
+collateral custody, authorization, or the attestation path. Contact the
+maintainers privately and give them time to respond before any disclosure.
