@@ -505,23 +505,6 @@ design intentions:
 
 ## Roadmap
 
-**Multi-partner attestation** — require corroborating attestations from more than
-one partner before a repayment counts, reducing single-partner trust.
-
-**Per-loan grace configuration** — let the grace period vary with loan size or
-beneficiary reputation instead of being a single global value.
-
-**DEX-based liquidation** — settle forfeited collateral through a swap rather
-than transferring USDC to a platform-controlled settlement address.
-
-**On-chain reputation derivation** — move part of the scoring on-chain so the LTV
-is reproducible without trusting the oracle.
-
-**TTL management** — extend the lifetime of long-lived vault and loan entries to
-avoid Soroban state archival.
-
-**SEP-10 authentication** — replace the header stub with real challenge-response
-signing.
-
-**Persistent storage and multi-instance operation** — PostgreSQL behind the
-stores, and an external scheduler or lock for the lifecycle sweep.
+The forward plan — what blocks testnet, what blocks a partner integration, and
+which trust assumptions v1 accepts deliberately — is maintained in
+[ROADMAP.md](ROADMAP.md), so it stays in one place as items ship.
