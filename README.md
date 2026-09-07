@@ -232,4 +232,4 @@ wired and what is not.
 
 ## License
 
-MIT
+MIT — see [LICENSE](LICENSE).
