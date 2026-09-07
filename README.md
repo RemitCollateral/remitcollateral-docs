@@ -220,6 +220,8 @@ state where origination or liquidation silently cannot proceed.
 - **[CONTRIBUTING.md](CONTRIBUTING.md)** — development workflow across the three
   repositories, per-stack coding standards, branching and commit conventions,
   and the pull request checklist.
+- **[SECURITY.md](SECURITY.md)** — how to report a vulnerability privately, what
+  we treat as severe in a custody protocol, and the limitations already known.
 
 ## Status
 

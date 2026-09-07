@@ -360,5 +360,9 @@ Report unacceptable behaviour to the maintainers through a private channel.
 ## Security
 
 Do not open a public issue for a vulnerability, especially one affecting
-collateral custody, authorization, or the attestation path. Contact the
-maintainers privately and give them time to respond before any disclosure.
+collateral custody, authorization, or the attestation path. Report it privately
+through the affected repository's **Security** tab → **Report a vulnerability**.
+
+See [SECURITY.md](SECURITY.md) for the full policy: what is in scope, what we
+treat as severe, the limitations already known and tracked, and our disclosure
+and safe-harbour terms.
