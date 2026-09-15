@@ -12,6 +12,7 @@ all of them, then the standards specific to each stack.
 
 - [Where does my change go?](#where-does-my-change-go)
 - [Getting started](#getting-started)
+  - [Picking an issue](#picking-an-issue)
 - [Development workflows](#development-workflows)
   - [Smart contracts (Rust / Soroban)](#smart-contracts-rust--soroban)
   - [Backend (TypeScript / Express)](#backend-typescript--express)
@@ -54,6 +55,14 @@ If a change touches more than one, read
    git checkout -b feature/your-feature-name
    ```
 
+### Picking an issue
+
+Each repository's open issues are meant to be one change each, small enough to
+review in a single pull request. Comment on an issue before you start so two
+people do not take the same work, and ask there if anything is unclear. Larger
+items from the [roadmap](ROADMAP.md) usually span repositories, so they start as
+an issue here in `remitcollateral-docs`.
+
 ---
 
 ## Development workflows
@@ -63,11 +72,11 @@ If a change touches more than one, read
 Source lives in `contracts/`, a Cargo workspace of three crates:
 `guarantor_vault`, `loan_ledger`, `liquidation_engine`.
 
-**Prerequisites:** Rust (latest stable), the `wasm32-unknown-unknown` target, and
-the Stellar CLI.
+**Prerequisites:** Rust (latest stable), the `wasm32v1-none` target, and the
+Stellar CLI.
 
 ```bash
-rustup target add wasm32-unknown-unknown
+rustup target add wasm32v1-none
 cargo install --locked stellar-cli
 ```
 
@@ -75,8 +84,12 @@ cargo install --locked stellar-cli
 
 ```bash
 cd contracts
-cargo build --target wasm32-unknown-unknown --release
+cargo build --target wasm32v1-none --release
 ```
+
+Use `wasm32v1-none`, not `wasm32-unknown-unknown`. Recent Rust enables wasm
+features on the latter that the Soroban VM rejects, and the failure only shows
+up when you deploy.
 
 **Test:**
 
@@ -103,6 +116,8 @@ comment explaining why the lint does not apply.
 
 ### Backend (TypeScript / Express)
 
+Node.js 22 or later.
+
 ```bash
 npm install
 cp .env.example .env
@@ -111,14 +126,20 @@ npm run dev        # ts-node-dev, hot reload, http://localhost:4000
 
 An empty `.env` boots a fully working API: every protocol parameter falls back to
 its documented default, and the off-ramp adapter and contract gateway are mocks.
+Setting the three contract IDs connects it to a deployment instead; the backend
+README lists the rest of the chain settings.
 
 ```bash
+npm test           # unit and API tests
+npm run test:chain # the chain client against a live testnet deployment
 npm run build      # tsc
 npm start          # node dist/index.js
 ```
 
-Verify `npm run build` passes before opening a PR — the dev server transpiles
-without type-checking, so a type error can hide until the build runs.
+Verify `npm test` and `npm run build` pass before opening a PR — the dev server
+transpiles without type-checking, so a type error can hide until the build runs.
+`npm run test:chain` needs funded testnet accounts; run it when you change
+`src/chain`.
 
 ### Frontend (Next.js / React)
 
@@ -173,6 +194,12 @@ NEXT_PUBLIC_API_URL=http://localhost:4000/api/v1
   you introduce a new division, state where the remainder goes.
 - **Test the negative case.** A test that proves an unauthorized caller is
   rejected is worth more than one that proves the happy path works.
+- **Extend what you use.** Extend the storage lifetime of every persistent entry
+  a function reads or writes, as the existing functions do, or long-lived loans
+  get archived.
+- **Changes that move money wait.** Anything that could redirect funds or replace
+  code goes through `schedule_action` and the timelock, not an immediate admin
+  call.
 
 ### Backend
 
@@ -180,10 +207,13 @@ NEXT_PUBLIC_API_URL=http://localhost:4000/api/v1
   `src/types`.
 - **Services hold logic; routes hold plumbing.** A route validates input, calls a
   service, and shapes the response. Business rules do not live in `src/routes`.
-- **Go through the interfaces.** All chain access goes through `ContractGateway`
-  and all partner access through `OffRampAdapter`. Never import the Stellar SDK or
-  call a partner API directly from a service — that is what keeps the mock and
-  live implementations interchangeable.
+- **Go through the edges.** Chain access goes through `src/chain` (and
+  `ContractGateway` on the paths not yet on chain), and partner access through
+  `OffRampAdapter`. Never import the Stellar SDK or call a partner API directly
+  from a service — that is what lets tests swap in fakes.
+- **Never sign for the guarantor.** Anything that moves a guarantor's collateral
+  is prepared by the backend and signed in the guarantor's wallet. The backend
+  holds no key that can do it, and a change that adds one will not be merged.
 - **Parameters are configurable.** Protocol constants are read from `config`, with
   a documented default. Do not inline a magic number that the architecture
   describes as tunable.
@@ -224,10 +254,11 @@ breaks one is a protocol change, not a bug fix — raise it as an issue in
 
 1. **Collateral is never pooled.** One vault per guarantor, always.
 2. **The beneficiary never appears on-chain as an address.** They are a
-   `BytesN<32>` handle. No phone number, name, or KYC reference reaches the
-   ledger.
-3. **Only a registered partner can attest a repayment.** Never the beneficiary,
-   never the guarantor.
+   `BytesN<32>` handle, a keyed hash of their phone number and KYC reference. No
+   phone number, name, or KYC reference reaches the ledger.
+3. **A repayment needs two signatures:** the loan's own registered partner and a
+   registered verifier, and a verifier is never also a partner. Never the
+   beneficiary, never the guarantor, never one signature alone.
 4. **Partner identity comes from the authenticated credential**, never from a
    request body.
 5. **Self-declared remittances carry zero scoring weight.** Only
@@ -240,6 +271,8 @@ breaks one is a protocol change, not a bug fix — raise it as an issue in
    of loan state and the ledger clock alone.
 9. **Reputation is recomputed from records**, not stored as a running penalty, so
    any score can be re-derived from the underlying history.
+10. **Only the guarantor's wallet moves their collateral.** The backend prepares
+    and submits; it never signs for them.
 
 If a change requires the backend's maths and the contracts' maths to agree —
 LTV, collateral release, grace period — update both, and say so in the PR.
@@ -293,7 +326,7 @@ Security-relevant changes should always carry a body.
    | Repository | Checks |
    |------------|--------|
    | Contracts | `cargo fmt --all`, `cargo clippy --all-targets --all-features -- -D warnings`, `cargo test` |
-   | Backend | `npm run build` |
+   | Backend | `npm test`, `npm run build` |
    | Frontend | `pnpm lint`, `pnpm typecheck`, `pnpm build` |
 
 3. **Open the PR** and fill in:
