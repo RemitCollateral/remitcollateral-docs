@@ -8,9 +8,12 @@ seriously and would rather hear a false alarm than miss a genuine issue.
 
 > **This is pre-production software. The contracts have not been audited.**
 
-v1 runs on testnet with mocked integrations at two boundaries — the Soroban
-contract gateway and the off-ramp partner adapter — and with in-memory
-persistence. Do not deploy it against mainnet funds or real beneficiary money.
+The contracts are deployed on Stellar testnet with a 2-of-3 multisig admin and a
+48-hour timelock on upgrades and settlement changes. The backend connects to
+them for sign-in, deposits, withdrawals and loan origination. Repayments and
+liquidation still run only in the backend's own records, the off-ramp partner is
+a mock, and persistence is in-memory. Do not deploy it against mainnet funds or
+real beneficiary money.
 The [integration status](ARCHITECTURE.md#integration-status) section of the
 architecture document records exactly what is wired and what is stubbed.
 
@@ -61,8 +64,8 @@ priority, roughly in order:
 - Cross-vault contamination — any path by which one guarantor's loss touches
   another guarantor's balance. Vaults are isolated by design and this must hold
   absolutely.
-- Bypassing the partner attestation requirement, so a repayment is credited
-  without a registered partner authorizing it.
+- Bypassing the co-signed attestation, so a repayment is credited without both
+  the loan's own partner and a registered verifier signing it.
 - Releasing more collateral than the repayment schedule earns, or closing a loan
   without the principal actually being repaid.
 
@@ -74,14 +77,15 @@ priority, roughly in order:
 - Attributing an attestation to a partner that did not make it.
 - Originating a loan with less collateral locked than the computed LTV requires,
   or with no lock at all.
-- Privilege escalation to the admin or oracle role.
+- Privilege escalation to the admin, oracle or verifier role, or running an
+  upgrade or settlement change without waiting out the timelock.
 - Blocking the permissionless liquidation cranks, so defaults cannot be recorded.
 
 **Medium and below**
 
 - Leaking beneficiary personal data — phone numbers, KYC references — into
-  on-chain state or logs. The beneficiary handle is a 32-byte digest precisely so
-  this cannot happen; a path that defeats it is a real issue.
+  on-chain state or logs. The beneficiary handle is a keyed 32-byte digest
+  precisely so this cannot happen; a path that defeats it is a real issue.
 - Denial of service against the API or the lifecycle sweep.
 - Audit trail gaps that make a state change unreconstructable.
 
@@ -91,17 +95,30 @@ you find a way to break one, that is very likely a valid report.
 
 ## Known limitations — already documented
 
-These are real weaknesses, but they are known, deliberate to v1, and recorded in
-[ARCHITECTURE.md](ARCHITECTURE.md#stubbed-or-pending). You are welcome to report
-them, but they are already tracked and will not be treated as new findings:
+These are real weaknesses, but they are known and recorded in
+[ARCHITECTURE.md](ARCHITECTURE.md#pending). You are welcome to report them, but
+they are already tracked and will not be treated as new findings:
 
-- **Wallet auth is a header stub.** The backend reads `x-wallet-address` and
-  accepts any non-empty signature rather than verifying SEP-10. It must not be
-  treated as authentication in any deployed environment.
-- **The contract gateway and off-ramp adapter are mocks.** No real chain calls or
-  partner calls happen in v1.
-- **Persistence is in-memory.** State does not survive a restart.
-- **FX is hardcoded 1:1.** Local-currency loans do not price correctly.
+- **Repayments and liquidation are not on chain yet.** With the contracts
+  connected, an attestation updates only the backend's records and releases no
+  collateral on chain, and the lifecycle sweep does not drive the liquidation
+  cranks.
+- **A failed payout cannot be undone on chain.** Collateral locked for a loan
+  whose disbursement then fails stays locked; the backend records
+  `LOAN_DISBURSEMENT_FAILED` for an operator to resolve.
+- **The off-ramp adapter is a mock.** Its `verifyAttestation` accepts any
+  non-empty signature, and its exchange rates are fixed.
+- **Persistence is in-memory.** State, sessions included, does not survive a
+  restart.
+- **A partner and the verifier together are trusted.** Both signatures are
+  required for a repayment, but if both collude they can credit one that never
+  happened. A dispute window before released collateral becomes withdrawable is
+  on the roadmap.
+- **The oracle and verifier are single keys** held by the backend. Only the admin
+  is a multisig.
+- **Most admin powers take effect immediately.** Only upgrades and settlement
+  changes wait out the timelock; registering or revoking partners and verifiers,
+  reassigning a loan's partner and setting the oracle do not.
 - **Reputation derivation is off-chain.** The on-chain LTV trusts the oracle's
   published score. Moving part of the derivation on-chain is on the roadmap.
 - **The lifecycle sweep assumes a single instance.** Running several backends
@@ -112,8 +129,9 @@ reporting.
 
 ## Out of scope
 
-- Findings that require a compromised guarantor wallet, admin key, or oracle key
-  — those roles are trusted by construction.
+- Findings that require a compromised guarantor wallet, enough of the admin
+  council's keys to meet its threshold, the oracle key, or both the partner's and
+  the verifier's keys — those roles are trusted by construction.
 - Vulnerabilities in Freighter, the Stellar network, Soroban itself, or a
   third-party off-ramp partner's own systems. Report those upstream.
 - Automated scanner output with no demonstrated impact.
