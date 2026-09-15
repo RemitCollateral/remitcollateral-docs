@@ -35,8 +35,8 @@ Three ideas carry the design:
 
 **The beneficiary is never a crypto user.** They have no wallet and never appear
 on-chain as an address. They are identified by a 32-byte handle derived from
-their phone number and the off-ramp partner's KYC reference, so no personally
-identifying data reaches the ledger. They receive naira, cedis or shillings, and
+their phone number and the off-ramp partner's KYC reference with a keyed hash, so
+no personally identifying data reaches the ledger. They receive naira, cedis or shillings, and
 they repay in naira, cedis or shillings.
 
 **Collateral is isolated, not pooled.** Every guarantor has their own vault. A
@@ -70,16 +70,17 @@ with the system through the off-ramp partner's existing channel and SMS.
 **1. Collateral.** The guarantor deposits USDC into their own vault. Nothing is
 pooled with anyone else's funds.
 
-**2. Origination.** The guarantor opens a loan. The protocol computes the
-required LTV from the beneficiary's reputation — 150% for a stranger, down to a
-110% floor for a well-established relationship — and locks that multiple of the
+**2. Origination.** The guarantor opens a loan, priced at the off-ramp
+partner's exchange rate, and signs it in their own wallet. The protocol computes
+the required LTV from the beneficiary's reputation — 150% for a stranger, down to
+a 110% floor for a well-established relationship — and locks that multiple of the
 principal in the vault. Only then is the off-ramp partner instructed to disburse
-local currency. If the disbursement fails, the lock is unwound.
+local currency.
 
 **3. Repayment.** The beneficiary repays in local currency through their normal
-channel. A registered off-ramp partner attests to each repayment, and collateral
-is released in proportion to principal repaid, less a safety buffer held back
-until the loan closes.
+channel. The partner servicing the loan and an independent verifier co-sign
+each repayment attestation, and collateral is released in proportion to principal
+repaid, less a safety buffer held back until the loan closes.
 
 **4. Closing.** The final attested installment returns all remaining collateral,
 buffer included, and the beneficiary's reputation improves — which lowers the
@@ -114,7 +115,7 @@ deployment runs.
 | Minimum LTV | `110%` | Floor — no reputation score goes below this |
 | LTV reduction | `0.004` per point | Reduction per point of composite reputation score |
 | Safety buffer | `5%` | Collateral retained until the loan closes completely |
-| Grace period | `7 days` | Time after a missed installment before default |
+| Grace period | `7 days` (backend), `14 days` (testnet ledger) | Time after a missed installment before default. The ledger's is fixed at deployment, so set the backend's `GRACE_PERIOD_DAYS` to match |
 | Remittance weight | `0.40` | Weight of remittance history in the composite score |
 | Repayment weight | `0.60` | Weight of repayment history in the composite score |
 | Minimum remittance history | `6 months` | History needed before remittances influence LTV |
@@ -141,10 +142,10 @@ about.
 
 | Tool | Version | Needed for |
 |------|---------|-----------|
-| Node.js | ≥ 18 (backend), ≥ 20 recommended | Backend and frontend |
+| Node.js | ≥ 22 (backend), ≥ 18.17 (frontend) | Backend and frontend |
 | pnpm | 8.x | Frontend |
 | Rust | latest stable | Contracts |
-| `wasm32-unknown-unknown` target | — | Contracts |
+| `wasm32v1-none` target | — | Contracts |
 | Stellar CLI | latest | Contract deployment |
 | [Freighter](https://www.freighter.app/) | — | Wallet connection in `live` mode |
 
@@ -177,6 +178,11 @@ The backend runs against in-memory stores and mock adapters by default, so an
 empty `.env` boots a complete working API. Health check at
 <http://localhost:4000/health>; the API is served under `/api/v1`.
 
+To connect it to the testnet contracts, set the three contract IDs and the chain
+settings listed in the [deployment section](ARCHITECTURE.md#deployment-and-wiring).
+`GET /api/v1/chain` then reports `enabled: true`, and deposits, withdrawals and
+new loans are signed in the guarantor's wallet.
+
 To point the frontend at it, set in `.env.local`:
 
 ```env
@@ -184,20 +190,17 @@ NEXT_PUBLIC_API_MODE=live
 NEXT_PUBLIC_API_URL=http://localhost:4000/api/v1
 ```
 
-> The frontend's built-in default is port `3001`, which does not match the
-> backend's default port of `4000`. Set `NEXT_PUBLIC_API_URL` explicitly.
-
 ### Contracts
 
 ```bash
 git clone https://github.com/RemitCollateral/remitcollateral-contract
 cd remitcollateral-contract/contracts
-rustup target add wasm32-unknown-unknown
-cargo build --target wasm32-unknown-unknown --release
+rustup target add wasm32v1-none
+cargo build --target wasm32v1-none --release
 cargo test
 ```
 
-Artifacts land in `contracts/target/wasm32-unknown-unknown/release/`:
+Artifacts land in `contracts/target/wasm32v1-none/release/`:
 
 ```
 rc_guarantor_vault.wasm
@@ -206,9 +209,9 @@ rc_liquidation_engine.wasm
 ```
 
 The three contracts reference each other by address and **must be wired after
-deployment** — see the [deployment sequence](ARCHITECTURE.md#deployment-and-wiring)
-in the architecture document. Skipping a wiring step leaves the protocol in a
-state where origination or liquidation silently cannot proceed.
+deployment**. The contract repository's `scripts/deploy.sh` deploys and wires
+them in order; the [deployment sequence](ARCHITECTURE.md#deployment-and-wiring)
+explains each step and lists the current testnet addresses.
 
 ---
 
@@ -217,21 +220,26 @@ state where origination or liquidation silently cannot proceed.
 - **[ARCHITECTURE.md](ARCHITECTURE.md)** — layer-by-layer design, the contract
   interfaces, the trust boundaries, the data model, the loan state machine, and
   the current integration gaps between repositories.
-- **[CONTRIBUTING.md](CONTRIBUTING.md)** — development workflow across the three
-  repositories, per-stack coding standards, branching and commit conventions,
-  and the pull request checklist.
-- **[ROADMAP.md](ROADMAP.md)** — what is left to do, ordered by dependency:
-  reconciling the repositories, testnet, the first partner integration,
-  production hardening, and the trust assumptions v1 accepts for now.
+- **[CONTRIBUTING.md](CONTRIBUTING.md)** — how to pick an issue, the development
+  workflow across the three repositories, per-stack coding standards, branching
+  and commit conventions, and the pull request checklist.
+- **[ROADMAP.md](ROADMAP.md)** — what has shipped and what is left, ordered by
+  dependency: finishing testnet, the first partner integration, production
+  hardening, and the trust assumptions v1 accepts for now.
 - **[SECURITY.md](SECURITY.md)** — how to report a vulnerability privately, what
   we treat as severe in a custody protocol, and the limitations already known.
 
 ## Status
 
-This is v1. The contracts are complete and tested; the backend runs on in-memory
-stores with a mock contract gateway and a mock off-ramp adapter; the frontend
-runs against either the mock or the live API. The seams where the live
-implementations plug in are interfaces, not rewrites — see
+The contracts are deployed on Stellar testnet with a 2-of-3 multisig admin and
+a 48-hour timelock, and are covered by unit tests and a smoke test against the
+live deployment. The backend connects to them: sign-in, deposits, withdrawals and
+loan origination run on chain with the guarantor's wallet signature, and the
+dashboard signs in Freighter.
+
+Repayments and liquidation still run only in the backend's own records, the
+off-ramp partner is a mock, state is held in memory, and the contracts have not
+been audited, so this is not ready for real money. See
 [Integration status](ARCHITECTURE.md#integration-status) for exactly what is
 wired and what is not.
 
