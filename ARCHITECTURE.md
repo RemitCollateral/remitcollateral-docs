@@ -22,8 +22,9 @@ witnessed by the off-ramp partner who processed it.
 
 So the settlement layer holds the money and enforces the rules, and the
 orchestration layer supplies the facts the chain cannot see — but *only* facts
-attributable to a registered, revocable partner identity. The protocol never
-accepts a repayment on the beneficiary's word, nor on the guarantor's.
+signed both by the registered partner that witnessed them and by an independent
+verifier. The protocol never accepts a repayment on the beneficiary's word, nor
+on the guarantor's, nor on a single signature.
 
 ```
 ┌─────────────────────────────────────────────────────────────────────┐
@@ -43,7 +44,7 @@ accepts a repayment on the beneficiary's word, nor on the guarantor's.
 │  Backend — orchestration                                            │
 │  Reputation engine · loan lifecycle · audit trail · sweep job       │
 └───────────────────────────────┬─────────────────────────────────────┘
-                                │  ContractGateway
+                                │  src/chain · Soroban RPC
                                 ▼
 ┌─────────────────────────────────────────────────────────────────────┐
 │  Soroban contracts — settlement                                     │
@@ -56,7 +57,8 @@ accepts a repayment on the beneficiary's word, nor on the guarantor's.
 ## 1. Settlement layer (Soroban)
 
 Three contracts in a Cargo workspace, `#![no_std]`, Soroban SDK v22, built to
-`wasm32-unknown-unknown`. They reference each other by address and are wired
+`wasm32v1-none`. Each is configured by a constructor that runs inside its own
+deploy transaction, and the references between them are wired once, straight
 after deployment.
 
 | Crate | Contract | Responsibility |
@@ -104,6 +106,9 @@ the engine knows a grace period expired. Releasing is shared, because both the
 happy path (repayment) and the unhappy path (excess returned after liquidation)
 need it.
 
+Forfeited collateral goes to the vault's settlement address, and changing that
+address waits out the [timelock](#administration).
+
 ### LoanLedger
 
 Holds the loan records and the protocol configuration:
@@ -120,14 +125,22 @@ pub struct Config {
 A loan carries the guarantor's `Address` and the beneficiary's `BytesN<32>`
 handle — never a beneficiary address, because there is no beneficiary wallet.
 
-**Origination** locks `principal × ltv` before anything is disbursed, and allows
-only one live loan per guarantor–beneficiary pair at a time (tracked by the
-`OpenLoan(guarantor, beneficiary)` key). Ordering matters: collateral is locked
-first, and the backend only instructs the partner to disburse afterwards. A
-contract rejection therefore stops the loan before any money moves.
+**Origination** is `originate(guarantor, beneficiary, partner, principal_usd,
+installment_count, interval_secs)`, signed by the guarantor. It names the
+registered partner that will disburse and collect the loan, and binds the loan
+to that partner for its whole life. It locks `principal × ltv` before anything is
+disbursed, and allows only one live loan per guarantor–beneficiary pair at a time
+(tracked by the `OpenLoan(guarantor, beneficiary)` key). Ordering matters:
+collateral is locked first, and the backend only instructs the partner to
+disburse afterwards. A contract rejection therefore stops the loan before any
+money moves. The reverse case is not covered yet: see
+[Origination rollback](#origination-rollback).
 
-**Repayment** is `attest_repayment(partner, loan_id, amount_usd)`, gated on the
-caller being a registered partner. Collateral released is:
+**Repayment** is `attest_repayment(partner, verifier, loan_id, amount_usd)`, and
+both addresses must sign the same invocation. `partner` must be the registered
+partner bound to that loan; `verifier` must be a registered verifier, and no
+address can be both. Neither signature counts on its own. Collateral released
+is:
 
 ```
 releasable  = collateral × (total_repaid / principal) × (1 − safety_buffer)
@@ -146,6 +159,11 @@ defence rather than an accident of implementation:
 Counting attestations would let a partner close a loan — and release all of its
 collateral — with a handful of token payments. `installments_paid` is tracked for
 reporting, but it does not gate closure.
+
+The same rule sets the schedule. `next_due` advances only by the installments
+that principal repaid actually covers, so a stream of small attestations cannot
+push a due date past a missed installment, and a partial payment that leaves the
+loan behind neither ends nor restarts its grace period.
 
 **Default transitions** (`mark_grace`, `mark_defaulted`) are restricted to the
 LiquidationEngine, and each independently re-checks the clock. The ledger does
@@ -182,13 +200,38 @@ loan is due for, returning `true` if it did anything.
 | Role | Held by | May |
 |------|---------|-----|
 | Guarantor | Stellar wallet | Deposit, withdraw unlocked collateral, originate against their own vault |
-| Off-ramp partner | Registered address | Attest repayments |
+| Off-ramp partner | Registered address | Co-sign repayment attestations on the loans it services |
+| Verifier | Registered address, never also a partner | Co-sign every repayment attestation after checking it |
 | Oracle | Registered address | Publish beneficiary reputation scores |
-| Admin | Stellar wallet | Wire the contracts, register/revoke partners, set oracle and settlement address |
+| Admin | Multisig account (2-of-3 on testnet) | Wire the contracts once, register and revoke partners and verifiers, reassign a loan's partner, set the oracle, schedule upgrades and settlement changes behind the timelock, hand the role over |
 | Anyone | — | Run the liquidation cranks |
 
-Partner registration is admin-controlled and revocable, and revocation takes
-effect on the next invocation.
+Partner and verifier registration is admin-controlled and revocable, and
+revocation takes effect on the next invocation. When a partner is offboarded,
+`reassign_partner` moves its open loans to another registered partner.
+
+### Administration
+
+Four mechanisms keep the admin role narrow and slow:
+
+- **Constructors.** Each contract takes its admin and configuration in
+  `__constructor`, which runs inside its own deploy transaction. There is no
+  public initializer for someone else to call first.
+- **One-time wiring.** The references between the contracts are set once after
+  deployment and cannot be changed afterwards, except by an upgrade.
+- **Timelock.** Upgrading a contract (`Upgrade(wasm_hash)`) and changing the
+  vault's settlement address (`SetSettlement(address)`) are scheduled with
+  `schedule_action`, wait out a delay fixed at deployment (48 hours by default),
+  and only then run through `execute_action`. `cancel_action` withdraws a pending
+  change, and `get_scheduled_action` shows it to anyone watching.
+- **Multisig.** The admin is a Stellar account with its own key removed and 2 of
+  its 3 signers required, which the network enforces on every `require_auth()`.
+  The role moves in two steps, `propose_admin` then `accept_admin`, so it cannot
+  be handed to an address nobody controls.
+
+Every call that uses a stored entry extends its lifetime to about 120 days once
+it has fallen below about 90, so live vaults and loans are not archived. An entry
+left untouched for longer is archived, not lost, and can be restored.
 
 ---
 
@@ -204,27 +247,58 @@ has passed, and keep an audit trail.
 src/
   config/       Environment & protocol configuration
   types/        Domain entities, DTOs, adapter types
+  auth/         Wallet signature verification (SEP-53) and sessions
   adapters/     OffRampAdapter interface + MockOffRampAdapter
+  chain/        Live Soroban client
   contracts/    ContractGateway interface + MockContractGateway
   stores/       In-memory data stores (v1)
   services/     Loan, vault, liquidation, reputation, remittance, notification, audit
+  api/          Response serializers: the frontend's snake_case shapes
   jobs/         Scheduled loan lifecycle sweep
-  middleware/   Wallet, partner API key, admin auth
+  middleware/   Wallet session, partner API key, admin auth
   routes/       Express route modules
-  index.ts      Composition root
+  app.ts        Composition root
+  index.ts      Starts the server
 ```
 
-Two interfaces define the layer's outward edges, and both ship with mocks:
+Three modules define the layer's outward edges:
 
 - **`OffRampAdapter`** — `disburse`, `verifyAttestation`, `getDisbursementStatus`,
-  `fetchRemittanceHistory`. One implementation per partner integration.
-- **`ContractGateway`** — the Soroban calls, mirroring the adapter pattern:
-  `depositCollateral`, `withdrawCollateral`, `lockCollateral`,
-  `releaseCollateral`, `getCollateralPosition`, `recordLoan`, `recordRepayment`,
-  `closeLoan`, `liquidateCollateral`.
+  `fetchRemittanceHistory`. One implementation per partner integration; v1 ships
+  a mock.
+- **`src/chain`** — the live Soroban client, connected when the three contract
+  IDs are configured. It reads vault and loan state, builds the transactions a
+  guarantor signs, publishes reputation as the oracle, and implements co-signed
+  attestations as the verifier and the liquidation cranks.
+- **`ContractGateway`** — the interface the services were first written against,
+  with `MockContractGateway` behind it. It still carries the paths that are not
+  on chain yet: repayments and liquidation. See
+  [Integration status](#integration-status).
 
-Both are injected in `index.ts`. Swapping a mock for a live implementation is a
-change at the composition root; nothing in `src/services` moves.
+The backend holds three chain secrets, and none of them is an admin key: the
+verifier key, the oracle key, and the key for the keyed hash that derives
+beneficiary handles.
+
+### Wallet-signed transactions
+
+A guarantor's collateral moves only with their own wallet's signature, so the
+backend never sends those transactions on its own. With the contracts connected
+(`GET /api/v1/chain` reports `enabled: true`), deposits, withdrawals and loan
+originations each take two calls:
+
+1. `POST …/prepare` checks the request against the rules the contract will
+   apply, builds the transaction and returns `{ xdr, hash, network_passphrase }`.
+2. The guarantor's wallet signs it. The dashboard uses Freighter's
+   `signTransaction`.
+3. `POST …/submit` with `{ hash, signed_xdr }` accepts only the exact transaction
+   it prepared, for the guarantor it prepared it for, within five minutes, then
+   submits it and records the result.
+
+Before preparing an origination, the backend publishes the beneficiary's
+reputation if the chain's copy is out of date, so the LTV the ledger applies is
+the LTV the backend quoted. Without the contracts configured, the direct
+endpoints (`POST /vaults/deposit`, `/vaults/withdraw`, `/loans`) keep the
+backend's own accounting instead.
 
 ### Reputation and LTV
 
@@ -269,6 +343,14 @@ and both yield 110%; a score of 0 yields 150% in both. The reduction per score
 point is `0.004` in the backend and `4000 bps / 100 = 40 bps` on-chain — the same
 number.
 
+### Exchange rates
+
+A loan's principal is set in the beneficiary's local currency and priced in USD
+at the off-ramp partner's own rate when it is originated, because that is the
+rate the partner pays out at. The rate is stored on the loan, so its
+installments and collateral releases are measured against it for the loan's
+whole life. A currency the partner cannot pay out in is refused.
+
 ### Loan lifecycle and the sweep
 
 Origination, repayment and collateral release are **request-driven**. Default is
@@ -296,6 +378,10 @@ one with no history at all.
 > one backend instance would run it more than once per tick, so a multi-instance
 > deployment needs an external scheduler or a distributed lock.
 
+With the contracts connected, the sweep still acts on the backend's own records.
+It does not yet drive the LiquidationEngine's cranks, and its grace period comes
+from `GRACE_PERIOD_DAYS`, which must match the ledger's (14 days on testnet).
+
 ### Origination rollback
 
 Origination touches three systems in order — chain, local state, partner — and
@@ -310,6 +396,14 @@ the failure path unwinds all of it:
 
 Without step 3's rollback, a failed disbursement would leave the guarantor's
 collateral locked against a loan that never existed.
+
+That rollback covers the backend's own accounting. On chain it is not possible
+yet: the origination is the guarantor's own signed transaction, and the ledger
+has no call that releases a loan's collateral before any repayment. A payout
+that fails after an on-chain lock is recorded as `LOAN_DISBURSEMENT_FAILED` in the
+audit trail for an operator to resolve. A cancellation co-signed by the partner
+and a verifier, allowed only before any repayment, would close this gap and is
+on the [roadmap](ROADMAP.md).
 
 ---
 
@@ -341,16 +435,20 @@ implementation it resolves to is one environment variable:
   maths*: reputation scoring, LTV adjustment, schedule generation, proportional
   collateral release. Mutations persist for the tab's lifetime; a reload resets.
 - **`live`** — `fetch` against `NEXT_PUBLIC_API_URL`, with the session token as a
-  bearer credential and a `401` clearing the session.
+  bearer credential and a `401` clearing the session. When the backend reports
+  the contracts connected, `depositCollateral`, `withdrawCollateral` and
+  `createLoan` run the [prepare, sign, submit](#wallet-signed-transactions)
+  sequence inside the same method, with Freighter signing, so no screen changes.
 
 This is not just a development convenience. Because the mock implements the same
 protocol maths, the UI can be reviewed and demoed against realistic behaviour
 without a chain, a partner, or a database.
 
-The pre-origination quote is derived client-side rather than fetched — it
-composes the reputation and vault responses the backend already exposes — so the
-loan form reacts as the guarantor types without a round trip per keystroke. The
-backend prices the loan authoritatively at origination.
+The pre-origination quote is computed client-side from the reputation and vault
+responses and the partner's exchange rate (`GET /fx/rates/:currency`), so the
+loan form reacts as the guarantor types without a round trip per keystroke, and
+the collateral it shows is the collateral the backend will lock. The backend
+prices the loan authoritatively at origination.
 
 ### Trust model made visible
 
@@ -361,19 +459,24 @@ The protocol's trust boundaries are surfaced in the UI rather than buried:
 - Remittance history below the six-month minimum is marked as not yet counting.
 - Default risk appears on the origination screen **before** the loan is created,
   with the exact figure at stake.
+- A beneficiary's partner KYC reference is required, because it is how the
+  partner identifies them and what links two guarantors supporting the same
+  person.
 
 ---
 
 ## Trust boundaries
 
-Three rules are enforced in code rather than by convention. Each closes a path by
+Four rules are enforced in code rather than by convention. Each closes a path by
 which a participant could otherwise improve their own terms.
 
-**Repayments require a partner.** The chain cannot observe a local-currency
-payment, so it accepts one only when a registered off-ramp partner authorizes the
-attestation — never on the beneficiary's or the guarantor's word. On-chain this
-is `partner.require_auth()` plus a registry check; in the backend it is the
-partner API key.
+**Repayments require the loan's partner and a verifier.** The chain cannot
+observe a local-currency payment, so it accepts one only when the registered
+partner servicing that loan and a registered verifier both sign the same
+attestation — never on the beneficiary's or the guarantor's word, never from a
+different partner, and never on one signature alone. On-chain this is
+`require_auth()` on both addresses plus the registry and loan checks; in the
+backend the partner is identified by its API key.
 
 **Attestations are attributed to the authenticated partner.** The partner
 identifier on a repayment comes from the API key that authenticated the request,
@@ -387,11 +490,18 @@ scoring. Only `POST /remittances/ingest`, behind the partner API key, writes
 score — and so cannot lower their own required LTV — by declaring remittances
 that never happened.
 
+**Collateral moves only with the guarantor's signature.** The backend prepares
+deposits, withdrawals and originations but holds no key that can sign them, and
+it submits only the exact transaction it prepared once the guarantor's wallet
+has signed it.
+
 ### What is deliberately not on-chain
 
 The beneficiary's identity. They are a `BytesN<32>` handle derived from their
-phone number and the partner's KYC reference, so no personally identifying data
-reaches a public ledger.
+phone number and the partner's KYC reference with a keyed hash (HMAC-SHA256), so
+no personally identifying data reaches a public ledger. The key matters: phone
+numbers are short and patterned enough to enumerate, so a plain hash would let
+anyone link on-chain loans to real people.
 
 Reputation *derivation*. Scoring runs off-chain over remittance and repayment
 history; only the resulting score is published on-chain, by a registered oracle,
@@ -413,7 +523,7 @@ The backend's domain entities, and how they relate to on-chain state:
 | `Loan` | `principalUsd`, `ltvRatio`, `collateralLockedUsd`, `collateralReleasedUsd`, `collateralForfeitedUsd`, `schedule`, `status` | `Loan` struct |
 | `InstallmentScheduleItem` | `dueAt`, `status`, `repaidAt` | Ledger tracks counts and timestamps, not the full schedule |
 | `RemittanceRecord` | `amountUsd`, `source` | Not on-chain — scoring input only |
-| `RepaymentAttestation` | `attestedBy`, `partnerSignature` | An authorized `attest_repayment` invocation |
+| `RepaymentAttestation` | `attestedBy`, `partnerSignature` | A partner-and-verifier co-signed `attest_repayment` invocation |
 | `AuditEvent` | `eventType`, `action`, `actor`, `details` | Not on-chain |
 
 Note the asymmetry in the loan: the backend holds the full installment schedule
@@ -429,77 +539,112 @@ sum across all of them and cannot attribute a release to any one loan.
 
 ## Deployment and wiring
 
-The three contracts reference each other by address, so they must be wired after
-deployment. **Order matters**, and a skipped step fails quietly at the worst
-moment.
+The contract repository's `scripts/deploy.sh` does all of this in order, and
+refuses to target mainnet unless `CONFIRM_MAINNET=yes` is set:
 
-1. Deploy all three contracts.
-2. `GuarantorVault::initialize(admin, usdc_token, settlement_address)`
-3. `LoanLedger::initialize(admin, vault, base_ltv_bps, min_ltv_bps, safety_buffer_bps, grace_period_secs)`
-4. `LiquidationEngine::initialize(admin, vault, loan_ledger)`
-5. `GuarantorVault::set_loan_ledger(admin, ledger)` — **without this, origination cannot lock collateral.**
-6. `GuarantorVault::set_liquidation_engine(admin, engine)` — **without this, liquidation cannot forfeit.**
-7. `LoanLedger::set_liquidation_engine(admin, engine)` — without this, no loan can leave `Active`.
-8. `LoanLedger::set_oracle(admin, oracle)` and `LoanLedger::set_partner(admin, partner, true)` for each partner.
+1. Deploy `GuarantorVault` with its constructor
+   `(admin, usdc_token, settlement_address, timelock_secs)`.
+2. Deploy `LoanLedger` with `(admin, vault, config, timelock_secs)`, where
+   `config` holds the LTV bounds, the safety buffer and the grace period.
+3. Deploy `LiquidationEngine` with `(admin, vault, loan_ledger, timelock_secs)`.
+4. Wire them, once: `GuarantorVault::set_loan_ledger`,
+   `GuarantorVault::set_liquidation_engine` and
+   `LoanLedger::set_liquidation_engine`. **Without these, origination cannot lock
+   collateral, liquidation cannot forfeit it, and no loan can leave `Active`.**
+5. Register the roles: `LoanLedger::set_oracle`, then
+   `set_partner(admin, partner, true)` for each partner and
+   `set_verifier(admin, verifier, true)` for each verifier.
 
-Then populate the backend's `.env` with the deployed contract IDs:
+Set up the admin multisig first and deploy with the settlement address pointing
+at it, so forfeited collateral never lands in a single-key account. Then hand it
+the admin role with `scripts/handover-to-multisig.sh` (`propose_admin`, then
+`accept_admin` signed by the council). `scripts/smoke-testnet.sh` runs the whole
+lifecycle against the result.
+
+The backend connects with the contract IDs and its own chain settings:
 
 ```env
 GUARANTOR_VAULT_CONTRACT_ID=
 LOAN_LEDGER_CONTRACT_ID=
 LIQUIDATION_ENGINE_CONTRACT_ID=
+VERIFIER_SECRET_KEY=
+ORACLE_SECRET_KEY=
+BENEFICIARY_HANDLE_SECRET=
+PARTNER_STELLAR_ADDRESS=
+GRACE_PERIOD_DAYS=14   # must match the ledger's grace period
 ```
+
+### Testnet
+
+The current deployment runs the production defaults (150% base LTV, 110% floor,
+5% safety buffer, 14-day grace), a 48-hour timelock and a 2-of-3 council as
+admin, against a test asset rather than Circle's USDC:
+
+| Contract | Address |
+|----------|---------|
+| GuarantorVault | `CD6TYOKK74XIACIS423QJ2XW3Z646AMMHEAPAIZR2SWKFTRA5F3FL3QR` |
+| LoanLedger | `CDCS5WKQPSQKA65HNDT6MS3OFS36VCZDMBJZ575REFDZCSABEUQFQSIL` |
+| LiquidationEngine | `CC25FFHO6CFCBZPV5J7IJV4LJWDIN2X2LIELKBBBZBAYQV42CKXWC4NU` |
+| Test USDC (SAC) | `CAWDARLC5JRSXG52Q6RWJJZ5YNEI3KJJOGVNQHEFAEQMESGPXRFCSHI4` |
+| Admin council (2-of-3) | `GAFDAOJ6UE3VIJ43W6WEW6D6T3MVDE5PISA74AS7AEIJE4KURQAJ7VMT` |
 
 ---
 
 ## Integration status
 
-v1 is complete at each layer and mocked between two of them. What follows is an
-honest account of the seams, so nobody mistakes a mock for a deployment.
+What follows is an honest account of what runs on chain and what does not yet,
+so nobody mistakes a mock for a deployment.
 
 ### Complete
 
-- All three Soroban contracts, with test suites and recorded snapshots.
-- The full `/api/v1` surface: auth, guarantors, vaults, beneficiaries, loans,
-  repayments, remittances, audit, admin.
-- The reputation engine, the loan lifecycle sweep, and the audit trail.
-- The frontend against both `mock` and `live` transports.
+- All three Soroban contracts, with test suites and recorded snapshots, deployed
+  on Stellar testnet and exercised end to end by a smoke test, including the
+  multisig and the timelock.
+- Wallet sign-in. The backend verifies a SEP-53 signed message and issues a
+  session token, stored hashed, and every wallet route requires one.
+- The live chain client. Vault figures are read from chain, and deposits,
+  withdrawals and loan originations are signed in the guarantor's wallet. The
+  backend has been run against the testnet deployment end to end: a deposit, a
+  reputation update and an origination all settled on chain.
+- Loans priced at the off-ramp partner's exchange rate.
+- The full `/api/v1` surface, the reputation engine, the lifecycle sweep and the
+  audit trail.
+- The frontend against both `mock` and `live`, signing in Freighter when the
+  contracts are connected.
 
-### Stubbed or pending
+### Pending
 
-**The contract gateway is a mock.** `MockContractGateway` satisfies the
-`ContractGateway` interface and simulates transaction hashes. The live Stellar
-SDK implementation, invoking the deployed contracts, is the main piece of work
-between v1 and a testnet deployment. Business logic in `src/services` should not
-need to change.
+**Repayments and liquidation are not on chain yet.** With the contracts
+connected, `POST /repayments/attest` updates only the backend's records, so no
+collateral is released on chain, and the lifecycle sweep moves loans into grace
+and default locally rather than through the LiquidationEngine. The chain client
+already implements co-signed attestations and the cranks; the services do not
+call them yet. Until they do, do not run with the contracts connected for real
+users.
+
+**The partner's half of an attestation.** On chain the partner signs its own
+authorization entry, but the backend has no API yet for a partner to receive an
+attestation, sign it and send it back.
+
+**A failed payout cannot be undone on chain.** See
+[Origination rollback](#origination-rollback).
 
 **The off-ramp adapter is a mock.** `MockOffRampAdapter` stands in for a real
-partner integration. Its interface is the contract each partner implements.
+partner integration, including its exchange rates, which are fixed indicative
+figures for NGN, GHS, XOF, KES and USD. Its interface is the contract each
+partner implements.
 
-**Persistence is in-memory.** The backend depends on `pg` and the stores are
-structured for a straightforward port, but v1 state does not survive a restart.
-
-**Wallet auth is a header stub.** The backend's `walletAuth` reads
-`x-wallet-address` rather than verifying a SEP-10 signature, and
-`verifyChallenge` accepts any non-empty signature. Loan reads are scoped to the
-owning guarantor regardless, so ownership is enforced correctly once real signing
-lands — but the header must not be treated as authentication in any deployed
-environment.
-
-**FX is 1:1.** `principalUsd = principalLocal` in origination. A real FX rate
-oracle is required before local-currency loans price correctly.
+**Persistence is in-memory.** State, sessions included, does not survive a
+restart.
 
 ### Known cross-repository mismatches
 
-These are real discrepancies between repositories as they currently stand, not
-design intentions:
-
 | Mismatch | Detail |
 |----------|--------|
-| **Auth header** | The frontend sends `Authorization: Bearer <token>`; the backend's middleware reads `x-wallet-address`. `live` mode will not authenticate until these agree. |
-| **Default port** | The frontend defaults `NEXT_PUBLIC_API_URL` to port `3001`; the backend defaults to `4000`. Set the variable explicitly. |
-| **Grace period** | The contract deployment guidance suggests 14 days for `grace_period_secs`; the backend and frontend both default to 7 days (`GRACE_PERIOD_DAYS`). These must be reconciled at deployment, or the chain and the sweep will disagree about when a loan defaults. |
-| **Beneficiary listing** | The frontend derives the beneficiary list from the dashboard payload because v1 has no `GET /beneficiaries` list endpoint. |
+| **Grace period** | The ledger's grace period is fixed at deployment: 14 days in `deploy.sh` and on testnet. The backend and frontend default to 7 days. Set `GRACE_PERIOD_DAYS=14` on a backend connected to that ledger, or the chain and the sweep will disagree about when a loan defaults. |
+
+The auth header, default API port and beneficiary list mismatches recorded here
+earlier are resolved.
 
 ---
 
