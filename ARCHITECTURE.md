@@ -597,8 +597,7 @@ The services around them:
 
 The backend is configured with the three contract IDs above, the council as its
 settlement address, `GRACE_PERIOD_DAYS=14` to match the ledger, and
-`CORS_ALLOWED_ORIGINS` set to the frontend's origin (plus an older deployment of
-the frontend, until it is retired) and nothing else. Its verifier and oracle
+`CORS_ALLOWED_ORIGINS` set to the frontend's origin and nothing else. Its verifier and oracle
 keys are the testnet identities registered on the ledger; no contract admin key
 is held by it.
 
