@@ -26,9 +26,10 @@ deployed contracts (`/api/v1/chain` reports `enabled: true`). Sign in with a
 
 This is a testnet deployment, not a production one. Specifically, the deployed
 backend still runs a **simulated off-ramp partner** (no real money moves and its
-exchange rates are fixed), repayments and liquidation are not yet settled on
-chain, state is held in memory and is lost when the backend restarts, and the
-collateral asset is Circle's testnet USDC, which has no real value. See
+exchange rates are fixed), no real repayment has yet been settled through the
+contracts (the code that does it is tested against a fake chain, not yet run on
+the live deployment), and the collateral asset is Circle's testnet USDC, which
+has no real value. State is kept in PostgreSQL and survives restarts. See
 [Integration status](ARCHITECTURE.md#integration-status) for the full account.
 
 ---
@@ -194,7 +195,8 @@ npm run dev                    # http://localhost:4000
 ```
 
 The backend runs against in-memory stores and mock adapters by default, so an
-empty `.env` boots a complete working API. Health check at
+empty `.env` boots a complete working API. Set `DATABASE_URL` to keep its state in
+PostgreSQL. Health check at
 <http://localhost:4000/health>; the API is served under `/api/v1`.
 
 To connect it to the testnet contracts, set the three contract IDs and the chain
@@ -256,8 +258,8 @@ live deployment. The backend connects to them: sign-in, deposits, withdrawals an
 loan origination run on chain with the guarantor's wallet signature, and the
 dashboard signs in Freighter.
 
-Repayments and liquidation still run only in the backend's own records, the
-off-ramp partner is a mock, state is held in memory, and the contracts have not
+Repayments and liquidation are wired to the contracts but have only been tested
+against a fake chain, the off-ramp partner is a mock, and the contracts have not
 been audited, so this is not ready for real money. See
 [Integration status](ARCHITECTURE.md#integration-status) for exactly what is
 wired and what is not.

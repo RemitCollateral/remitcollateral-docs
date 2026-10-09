@@ -35,8 +35,9 @@ that section should shrink.
   live API.
 - ✅ Protocol documentation, license, and security policy.
 
-What this does **not** yet include: repayments or liquidation on chain, a single
-real disbursement, or any state that survives a restart.
+What this does **not** yet include: a repayment or liquidation settled through the
+live contracts (the code exists and is tested against a fake chain), or a single
+real disbursement.
 
 ---
 
@@ -80,19 +81,22 @@ against deployed contracts on Stellar testnet.
 - [x] **Exchange rates.** Loans are priced at the off-ramp partner's rate, which
   is stored on the loan. The mock partner's rates are fixed; a real partner
   supplies live ones.
-- [ ] **Repayments on chain.** Route partner attestations through the chain
-  client as co-signed `attest_repayment` calls, with an API for the partner to
-  sign its half.
-- [ ] **Liquidation on chain.** Drive `flag_overdue` and `liquidate` from the
-  lifecycle sweep, so the chain and the backend's records advance together.
+- [x] **Repayments on chain.** Partner attestations are checked against the
+  schedule and the partner's registered key, then recorded through the chain
+  client as co-signed `attest_repayment` calls. Tested against a fake chain; not
+  yet run on the live contracts. The simulated partner's key is held by the
+  backend; an API for a real partner to sign its own half is still to do.
+- [x] **Liquidation on chain.** The lifecycle sweep drives `flag_overdue` and
+  `liquidate` from the ledger's own dates. Same testing status as above.
 - [ ] **Cancel an undisbursed loan.** A ledger call, co-signed by the partner and
   a verifier and allowed only before any repayment, that releases the collateral
   of a loan whose payout failed.
-- [ ] **Persistent storage.** PostgreSQL behind the stores. The `pg` dependency
-  is already present and the stores are structured for the port.
-- [ ] **Reconcile chain and backend state.** Both track loan status and
-  collateral. Vault figures are already read from chain; loans need the same,
-  with the chain authoritative on disagreement and a check that detects drift.
+- [x] **Persistent storage.** The stores are persisted to PostgreSQL and loaded at
+  startup; verified on the live deployment across a redeploy. It is a durable
+  copy of in-memory stores for a single instance, not per-request queries.
+- [x] **Reconcile chain and backend state.** Loan state is read from chain with
+  the chain authoritative, and a difference the backend did not cause is audited
+  as `LOAN_CHAIN_DRIFT`.
 
 ---
 

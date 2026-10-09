@@ -251,7 +251,8 @@ src/
   adapters/     OffRampAdapter interface + MockOffRampAdapter
   chain/        Live Soroban client
   contracts/    ContractGateway interface + MockContractGateway
-  stores/       In-memory data stores (v1)
+  stores/       In-memory working stores
+  persistence/  PostgreSQL schema, load at startup, write-behind of the stores
   services/     Loan, vault, liquidation, reputation, remittance, notification, audit
   api/          Response serializers: the frontend's snake_case shapes
   jobs/         Scheduled loan lifecycle sweep
@@ -627,17 +628,21 @@ so nobody mistakes a mock for a deployment.
 
 ### Pending
 
-**Repayments and liquidation are not on chain yet.** With the contracts
-connected, `POST /repayments/attest` updates only the backend's records, so no
-collateral is released on chain, and the lifecycle sweep moves loans into grace
-and default locally rather than through the LiquidationEngine. The chain client
-already implements co-signed attestations and the cranks; the services do not
-call them yet. Until they do, do not run with the contracts connected for real
-users.
+**Repayments and liquidation are wired to the contracts, but unproven live.**
+With the contracts connected, `POST /repayments/attest` checks the attestation
+against the loan's schedule and the partner's signature, then records it with a
+co-signed `attest_repayment`, and the lifecycle sweep drives the engine's
+`flag_overdue` and `liquidate` from the ledger's own dates. Loan state is read
+from chain, which wins on any disagreement (audited as `LOAN_CHAIN_DRIFT`). All of
+this is tested against a fake chain that applies the ledger's rules; no loan has
+yet been originated and repaid through the live deployment.
 
 **The partner's half of an attestation.** On chain the partner signs its own
-authorization entry, but the backend has no API yet for a partner to receive an
-attestation, sign it and send it back.
+authorization entry. The simulated partner's key is held by the backend
+(`PARTNER_SECRET_KEY`) so it can do that; there is no API yet for a real partner
+to receive an attestation, sign it and send it back, and a real partner's key
+must never be held by the backend. Nothing checks a repayment against a partner's
+own records either, because the partner is simulated.
 
 **A failed payout cannot be undone on chain.** See
 [Origination rollback](#origination-rollback).
@@ -647,8 +652,11 @@ partner integration, including its exchange rates, which are fixed indicative
 figures for NGN, GHS, XOF, KES and USD. Its interface is the contract each
 partner implements.
 
-**Persistence is in-memory.** State, sessions included, does not survive a
-restart.
+**Persistence is a durable copy, for one instance.** The stores are written to
+PostgreSQL and loaded at startup, so state, sessions included, survives a restart
+(checked on the live deployment). The database is not queried per request and is
+not shared between instances, and a crash can lose changes made in the last few
+milliseconds.
 
 ### Known cross-repository mismatches
 
