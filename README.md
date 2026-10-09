@@ -16,7 +16,7 @@ three sibling repositories.
 
 | Component | Where | Repository |
 |-----------|-------|------------|
-| Frontend (guarantor dashboard) | <https://remitcollateral-frontend.vercel.app> | [remitcollateral-frontend](https://github.com/RemitCollateral/remitcollateral-frontend) |
+| Frontend (guarantor dashboard) | <https://remitcollateral-frontend-alpha.vercel.app> | [remitcollateral-frontend](https://github.com/RemitCollateral/remitcollateral-frontend) |
 | Backend API | <https://remitcollateral-backend-production.up.railway.app> — [`/health`](https://remitcollateral-backend-production.up.railway.app/health), [`/api/v1/chain`](https://remitcollateral-backend-production.up.railway.app/api/v1/chain) | [remitcollateral-backend](https://github.com/RemitCollateral/remitcollateral-backend) |
 | Contracts | Stellar testnet — see [addresses](ARCHITECTURE.md#testnet) | [remitcollateral-contract](https://github.com/RemitCollateral/remitcollateral-contract) |
 
