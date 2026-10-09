@@ -28,7 +28,7 @@ This is a testnet deployment, not a production one. Specifically, the deployed
 backend still runs a **simulated off-ramp partner** (no real money moves and its
 exchange rates are fixed), repayments and liquidation are not yet settled on
 chain, state is held in memory and is lost when the backend restarts, and the
-collateral asset is a test token rather than Circle's USDC. See
+collateral asset is Circle's testnet USDC, which has no real value. See
 [Integration status](ARCHITECTURE.md#integration-status) for the full account.
 
 ---

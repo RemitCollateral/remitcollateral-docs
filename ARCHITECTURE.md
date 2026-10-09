@@ -578,14 +578,14 @@ GRACE_PERIOD_DAYS=14   # must match the ledger's grace period
 
 The current deployment runs the production defaults (150% base LTV, 110% floor,
 5% safety buffer, 14-day grace), a 48-hour timelock and a 2-of-3 council as
-admin, against a test asset rather than Circle's USDC:
+admin, against Circle's testnet USDC (the standard asset behind the Circle faucet and Freighter's USDC trustline):
 
 | Contract | Address |
 |----------|---------|
-| GuarantorVault | `CD6TYOKK74XIACIS423QJ2XW3Z646AMMHEAPAIZR2SWKFTRA5F3FL3QR` |
-| LoanLedger | `CDCS5WKQPSQKA65HNDT6MS3OFS36VCZDMBJZ575REFDZCSABEUQFQSIL` |
-| LiquidationEngine | `CC25FFHO6CFCBZPV5J7IJV4LJWDIN2X2LIELKBBBZBAYQV42CKXWC4NU` |
-| Test USDC (SAC) | `CAWDARLC5JRSXG52Q6RWJJZ5YNEI3KJJOGVNQHEFAEQMESGPXRFCSHI4` |
+| GuarantorVault | `CBTD4XTWHWWZGIR73YEABQ27VAFPM2F2VD2HAUVQL4GBG72UQAUDYCCV` |
+| LoanLedger | `CCQNUDRVK7WPQZP2ISTSBMPTGBT2VNULEPFHCSLUCVLVINW5T6LSVR2V` |
+| LiquidationEngine | `CBKBE27LZRCV6CXJPGGO5M373XMVMX3EUABD7JN6C764DZNRMJNRCJKE` |
+| USDC (Circle testnet SAC, issuer `GBBD47IF6LWK7P7MDEVSCWR7DPUWV3NY3DTQEVFL4NAT4AQH3ZLLFLA5`) | `CBIELTK6YBZJU5UP2WWQEUCYKLPU6AUNZ2BQ4WWFEIE3USCIHMXQDAMA` |
 | Admin council (2-of-3) | `GAFDAOJ6UE3VIJ43W6WEW6D6T3MVDE5PISA74AS7AEIJE4KURQAJ7VMT` |
 
 The services around them:
