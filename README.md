@@ -12,6 +12,25 @@ whether that collateral comes back.
 This repository is the **protocol documentation**. The running system lives in
 three sibling repositories.
 
+## Live deployment (Stellar testnet)
+
+| Component | Where | Repository |
+|-----------|-------|------------|
+| Frontend (guarantor dashboard) | <https://remitcollateral-frontend.vercel.app> | [remitcollateral-frontend](https://github.com/RemitCollateral/remitcollateral-frontend) |
+| Backend API | <https://remitcollateral-backend-production.up.railway.app> — [`/health`](https://remitcollateral-backend-production.up.railway.app/health), [`/api/v1/chain`](https://remitcollateral-backend-production.up.railway.app/api/v1/chain) | [remitcollateral-backend](https://github.com/RemitCollateral/remitcollateral-backend) |
+| Contracts | Stellar testnet — see [addresses](ARCHITECTURE.md#testnet) | [remitcollateral-contract](https://github.com/RemitCollateral/remitcollateral-contract) |
+
+The frontend runs in `live` mode against the backend, which is connected to the
+deployed contracts (`/api/v1/chain` reports `enabled: true`). Sign in with a
+[Freighter](https://www.freighter.app/) wallet set to **Testnet**.
+
+This is a testnet deployment, not a production one. Specifically, the deployed
+backend still runs a **simulated off-ramp partner** (no real money moves and its
+exchange rates are fixed), repayments and liquidation are not yet settled on
+chain, state is held in memory and is lost when the backend restarts, and the
+collateral asset is a test token rather than Circle's USDC. See
+[Integration status](ARCHITECTURE.md#integration-status) for the full account.
+
 ---
 
 ## The problem

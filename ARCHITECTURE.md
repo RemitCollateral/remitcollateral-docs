@@ -588,6 +588,19 @@ admin, against a test asset rather than Circle's USDC:
 | Test USDC (SAC) | `CAWDARLC5JRSXG52Q6RWJJZ5YNEI3KJJOGVNQHEFAEQMESGPXRFCSHI4` |
 | Admin council (2-of-3) | `GAFDAOJ6UE3VIJ43W6WEW6D6T3MVDE5PISA74AS7AEIJE4KURQAJ7VMT` |
 
+The services around them:
+
+| Service | URL |
+|---------|-----|
+| Frontend | <https://remitcollateral-frontend.vercel.app> (Vercel, `NEXT_PUBLIC_API_MODE=live`) |
+| Backend | <https://remitcollateral-backend-production.up.railway.app> (Railway) |
+
+The backend is configured with the three contract IDs above, the council as its
+settlement address, `GRACE_PERIOD_DAYS=14` to match the ledger, and
+`CORS_ALLOWED_ORIGINS` set to the frontend's origin only. Its verifier and oracle
+keys are the testnet identities registered on the ledger; no contract admin key
+is held by it.
+
 ---
 
 ## Integration status
