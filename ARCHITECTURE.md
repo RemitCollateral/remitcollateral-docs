@@ -594,7 +594,7 @@ The services around them:
 | Service | URL |
 |---------|-----|
 | Frontend | <https://remitcollateral-frontend-alpha.vercel.app> (Vercel, `NEXT_PUBLIC_API_MODE=live`) |
-| Backend | <https://remitcollateral-backend-production.up.railway.app/health> (Railway; the root URL has no page, `/health` shows status and database, `/api/v1/chain` shows the contract connection) |
+| Backend | <https://remitcollateral-backend-production.up.railway.app/health> |
 
 The backend is configured with the three contract IDs above, the council as its
 settlement address, `GRACE_PERIOD_DAYS=14` to match the ledger, and
